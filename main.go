@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"restaurant-booking-backend/config"
+	"restaurant-booking-backend/models"
 	"restaurant-booking-backend/routes"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,12 @@ func main() {
 
 	// Connect to database
 	config.InitDB()
+
+	// Auto migrate database
+	if err := config.DB.AutoMigrate(&models.User{}); err != nil {
+		log.Fatal("Failed to migrate database:", err)
+	}
+	log.Println("Database migration completed")
 
 	// Set Gin mode
 	if os.Getenv("GIN_MODE") == "" {
