@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	authController = controllers.AuthController{}
-	menuController = controllers.MenuController{}
+	authController  = controllers.AuthController{}
+	menuController  = controllers.MenuController{}
+	tableController = controllers.TableController{}
 )
 
 // SetupRoutes sets up API routes
@@ -36,6 +37,13 @@ func SetupRoutes(router *gin.Engine) {
 			menu.GET("/:id", menuController.GetMenuItemByID)
 		}
 
+		// Table routes (public - for customers to view available tables)
+		tables := api.Group("/tables")
+		{
+			tables.GET("/available", tableController.GetAvailableTables)
+			tables.GET("/statuses", tableController.GetTableStatuses)
+		}
+
 		// Protected routes
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware())
@@ -56,6 +64,16 @@ func SetupRoutes(router *gin.Engine) {
 					adminMenu.POST("", menuController.CreateMenuItem)
 					adminMenu.PUT("/:id", menuController.UpdateMenuItem)
 					adminMenu.DELETE("/:id", menuController.DeleteMenuItem)
+				}
+
+				// Table management routes (admin only)
+				adminTables := admin.Group("/admin/tables")
+				{
+					adminTables.GET("", tableController.GetAllTables)
+					adminTables.GET("/:id", tableController.GetTableByID)
+					adminTables.POST("", tableController.CreateTable)
+					adminTables.PUT("/:id", tableController.UpdateTable)
+					adminTables.DELETE("/:id", tableController.DeleteTable)
 				}
 			}
 
