@@ -20,6 +20,10 @@ type User struct {
 	Password string   `gorm:"not null" json:"-"`
 	Name     string   `gorm:"not null" json:"name"`
 	Role     UserRole `gorm:"type:varchar(20);default:'customer'" json:"role"`
+	
+	// Relationships
+	Reservations  []Reservation  `gorm:"foreignKey:UserID" json:"reservations,omitempty"`
+	Notifications []Notification  `gorm:"foreignKey:UserID" json:"notifications,omitempty"`
 }
 
 // BeforeCreate hash password before creating user

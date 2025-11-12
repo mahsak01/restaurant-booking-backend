@@ -19,7 +19,13 @@ func main() {
 	config.InitDB()
 
 	// Auto migrate database
-	if err := config.DB.AutoMigrate(&models.User{}); err != nil {
+	if err := config.DB.AutoMigrate(
+		&models.User{},
+		&models.Table{},
+		&models.MenuItem{},
+		&models.Reservation{},
+		&models.Notification{},
+	); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
 	log.Println("Database migration completed")
