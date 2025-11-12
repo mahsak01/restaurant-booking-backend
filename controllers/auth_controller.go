@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"net/http"
+	"strings"
 
 	"restaurant-booking-backend/config"
 	"restaurant-booking-backend/models"
@@ -18,14 +19,14 @@ type AuthController struct {
 
 // SignupRequest signup request structure
 type SignupRequest struct {
-	Email    string `json:"email" binding:"required,email"`
+	Phone    string `json:"phone" binding:"required"`
 	Password string `json:"password" binding:"required,min=6"`
 	Name     string `json:"name" binding:"required"`
 }
 
 // LoginRequest login request structure
 type LoginRequest struct {
-	Email    string `json:"email" binding:"required,email"`
+	Phone    string `json:"phone" binding:"required"`
 	Password string `json:"password" binding:"required"`
 }
 
@@ -49,10 +50,17 @@ func (ac *AuthController) Signup(c *gin.Context) {
 		return
 	}
 
+	// Validate phone number
+	req.Phone = strings.TrimSpace(req.Phone)
+	if !utils.ValidatePhoneNumber(req.Phone) {
+		ac.ErrorResponse(c, http.StatusBadRequest, "Invalid phone number format")
+		return
+	}
+
 	// Check if user already exists
 	var existingUser models.User
-	if err := config.DB.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
-		ac.ErrorResponse(c, http.StatusConflict, "User with this email already exists")
+	if err := config.DB.Where("phone = ?", req.Phone).First(&existingUser).Error; err == nil {
+		ac.ErrorResponse(c, http.StatusConflict, "User with this phone number already exists")
 		return
 	} else if err != gorm.ErrRecordNotFound {
 		ac.ErrorResponse(c, http.StatusInternalServerError, "Database error")
@@ -61,7 +69,7 @@ func (ac *AuthController) Signup(c *gin.Context) {
 
 	// Create new user
 	user := models.User{
-		Email:    req.Email,
+		Phone:    req.Phone,
 		Password: req.Password, // Will be hashed in BeforeCreate hook
 		Name:     req.Name,
 		Role:     models.RoleCustomer, // Default role
@@ -73,7 +81,7 @@ func (ac *AuthController) Signup(c *gin.Context) {
 	}
 
 	// Generate JWT token
-	token, err := utils.GenerateToken(user.ID, user.Email, string(user.Role))
+	token, err := utils.GenerateToken(user.ID, user.Phone, string(user.Role))
 	if err != nil {
 		ac.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
 		return
@@ -96,11 +104,18 @@ func (ac *AuthController) Login(c *gin.Context) {
 		return
 	}
 
-	// Find user by email
+	// Validate phone number
+	req.Phone = strings.TrimSpace(req.Phone)
+	if !utils.ValidatePhoneNumber(req.Phone) {
+		ac.ErrorResponse(c, http.StatusBadRequest, "Invalid phone number format")
+		return
+	}
+
+	// Find user by phone
 	var user models.User
-	if err := config.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+	if err := config.DB.Where("phone = ?", req.Phone).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			ac.ErrorResponse(c, http.StatusUnauthorized, "Invalid email or password")
+			ac.ErrorResponse(c, http.StatusUnauthorized, "Invalid phone number or password")
 			return
 		}
 		ac.ErrorResponse(c, http.StatusInternalServerError, "Database error")
@@ -109,12 +124,12 @@ func (ac *AuthController) Login(c *gin.Context) {
 
 	// Check password
 	if !user.CheckPassword(req.Password) {
-		ac.ErrorResponse(c, http.StatusUnauthorized, "Invalid email or password")
+		ac.ErrorResponse(c, http.StatusUnauthorized, "Invalid phone number or password")
 		return
 	}
 
 	// Generate JWT token
-	token, err := utils.GenerateToken(user.ID, user.Email, string(user.Role))
+	token, err := utils.GenerateToken(user.ID, user.Phone, string(user.Role))
 	if err != nil {
 		ac.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
 		return

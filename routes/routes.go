@@ -134,14 +134,14 @@ func healthCheck(c *gin.Context) {
 // getProfile gets current user profile
 func getProfile(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	userEmail, _ := c.Get("user_email")
+	userPhone, _ := c.Get("user_phone")
 	userRole, _ := c.Get("user_role")
 
 	c.JSON(200, gin.H{
 		"success": true,
 		"data": gin.H{
 			"user_id": userID,
-			"email":   userEmail,
+			"phone":   userPhone,
 			"role":    userRole,
 		},
 	})

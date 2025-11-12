@@ -16,7 +16,7 @@ const (
 // User user model
 type User struct {
 	BaseModel
-	Email    string   `gorm:"uniqueIndex;not null" json:"email"`
+	Phone    string   `gorm:"uniqueIndex;not null" json:"phone"`
 	Password string   `gorm:"not null" json:"-"`
 	Name     string   `gorm:"not null" json:"name"`
 	Role     UserRole `gorm:"type:varchar(20);default:'customer'" json:"role"`

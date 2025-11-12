@@ -27,13 +27,13 @@ func (uc *UserController) GetAllUsers(c *gin.Context) {
 		query = query.Where("role = ?", role)
 	}
 
-	// Search by name or email if provided
+	// Search by name or phone if provided
 	search := c.Query("search")
 	if search != "" {
-		query = query.Where("name ILIKE ? OR email ILIKE ?", "%"+search+"%", "%"+search+"%")
+		query = query.Where("name ILIKE ? OR phone ILIKE ?", "%"+search+"%", "%"+search+"%")
 	}
 
-	if err := query.Select("id, email, name, role, created_at, updated_at").Order("created_at DESC").Find(&users).Error; err != nil {
+	if err := query.Select("id, phone, name, role, created_at, updated_at").Order("created_at DESC").Find(&users).Error; err != nil {
 		uc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch users")
 		return
 	}
@@ -50,7 +50,7 @@ func (uc *UserController) GetUserByID(c *gin.Context) {
 	}
 
 	var user models.User
-	if err := config.DB.Select("id, email, name, role, created_at, updated_at").First(&user, id).Error; err != nil {
+	if err := config.DB.Select("id, phone, name, role, created_at, updated_at").First(&user, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			uc.ErrorResponse(c, http.StatusNotFound, "User not found")
 			return

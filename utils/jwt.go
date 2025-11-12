@@ -13,7 +13,7 @@ var jwtSecret = []byte(getJWTSecret())
 // Claims JWT claims structure
 type Claims struct {
 	UserID uint   `json:"user_id"`
-	Email  string `json:"email"`
+	Phone  string `json:"phone"`
 	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
@@ -28,12 +28,12 @@ func getJWTSecret() string {
 }
 
 // GenerateToken generates JWT token for user
-func GenerateToken(userID uint, email, role string) (string, error) {
+func GenerateToken(userID uint, phone, role string) (string, error) {
 	expirationTime := time.Now().Add(24 * time.Hour) // Token expires in 24 hours
 
 	claims := &Claims{
 		UserID: userID,
-		Email:  email,
+		Phone:  phone,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
