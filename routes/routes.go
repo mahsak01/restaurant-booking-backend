@@ -8,9 +8,11 @@ import (
 )
 
 var (
-	authController  = controllers.AuthController{}
-	menuController  = controllers.MenuController{}
-	tableController = controllers.TableController{}
+	authController        = controllers.AuthController{}
+	menuController        = controllers.MenuController{}
+	tableController       = controllers.TableController{}
+	reservationController = controllers.NewReservationController()
+	notificationController = controllers.NotificationController{}
 )
 
 // SetupRoutes sets up API routes
@@ -75,14 +77,39 @@ func SetupRoutes(router *gin.Engine) {
 					adminTables.PUT("/:id", tableController.UpdateTable)
 					adminTables.DELETE("/:id", tableController.DeleteTable)
 				}
+
+				// Reservation management routes (admin only)
+				adminReservations := admin.Group("/admin/reservations")
+				{
+					adminReservations.GET("", reservationController.GetAllReservations)
+					adminReservations.GET("/statuses", reservationController.GetReservationStatuses)
+					adminReservations.GET("/:id", reservationController.GetReservationByID)
+					adminReservations.PUT("/:id/status", reservationController.UpdateReservationStatus)
+					adminReservations.DELETE("/:id", reservationController.CancelReservation)
+				}
 			}
 
 			// Customer only routes
 			customer := protected.Group("")
 			customer.Use(middleware.RequireCustomer())
 			{
-				// Example customer route
-				customer.GET("/customer/bookings", getCustomerBookings)
+				// Reservation routes (customer)
+				customerReservations := customer.Group("/reservations")
+				{
+					customerReservations.POST("", reservationController.CreateReservation)
+					customerReservations.GET("", reservationController.GetUserReservations)
+					customerReservations.GET("/:id", reservationController.GetReservationByID)
+					customerReservations.DELETE("/:id", reservationController.CancelReservation)
+				}
+
+			}
+
+			// Notification routes (for all authenticated users)
+			notifications := protected.Group("/notifications")
+			{
+				notifications.GET("", notificationController.GetUserNotifications)
+				notifications.GET("/count", notificationController.GetUnreadNotificationsCount)
+				notifications.DELETE("/:id", notificationController.DeleteNotification)
 			}
 		}
 	}
