@@ -13,6 +13,7 @@ var (
 	tableController       = controllers.TableController{}
 	reservationController = controllers.NewReservationController()
 	notificationController = controllers.NotificationController{}
+	userController         = controllers.UserController{}
 )
 
 // SetupRoutes sets up API routes
@@ -57,8 +58,14 @@ func SetupRoutes(router *gin.Engine) {
 			admin := protected.Group("")
 			admin.Use(middleware.RequireAdmin())
 			{
-				// Example admin route
-				admin.GET("/admin/users", getUsers)
+				// User management routes (admin only)
+				adminUsers := admin.Group("/admin/users")
+				{
+					adminUsers.GET("", userController.GetAllUsers)
+					adminUsers.GET("/:id", userController.GetUserByID)
+					adminUsers.PUT("/:id/role", userController.UpdateUserRole)
+					adminUsers.DELETE("/:id", userController.DeleteUser)
+				}
 
 				// Menu management routes (admin only)
 				adminMenu := admin.Group("/admin/menu")
@@ -109,6 +116,7 @@ func SetupRoutes(router *gin.Engine) {
 			{
 				notifications.GET("", notificationController.GetUserNotifications)
 				notifications.GET("/count", notificationController.GetUnreadNotificationsCount)
+				notifications.PUT("/:id/read", notificationController.MarkNotificationAsRead)
 				notifications.DELETE("/:id", notificationController.DeleteNotification)
 			}
 		}
@@ -136,15 +144,6 @@ func getProfile(c *gin.Context) {
 			"email":   userEmail,
 			"role":    userRole,
 		},
-	})
-}
-
-// getUsers gets all users (admin only)
-func getUsers(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"success": true,
-		"message": "Admin access granted",
-		"data":    "List of users will be here",
 	})
 }
 
