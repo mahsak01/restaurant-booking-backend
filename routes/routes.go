@@ -9,6 +9,7 @@ import (
 
 var (
 	authController = controllers.AuthController{}
+	menuController = controllers.MenuController{}
 )
 
 // SetupRoutes sets up API routes
@@ -26,6 +27,15 @@ func SetupRoutes(router *gin.Engine) {
 			auth.POST("/login", authController.Login)
 		}
 
+		// Menu routes (public - for customers)
+		menu := api.Group("/menu")
+		{
+			menu.GET("", menuController.GetAllMenuItems)
+			menu.GET("/categories", menuController.GetCategories)
+			menu.GET("/category/:category", menuController.GetMenuItemsByCategory)
+			menu.GET("/:id", menuController.GetMenuItemByID)
+		}
+
 		// Protected routes
 		protected := api.Group("")
 		protected.Use(middleware.AuthMiddleware())
@@ -39,6 +49,14 @@ func SetupRoutes(router *gin.Engine) {
 			{
 				// Example admin route
 				admin.GET("/admin/users", getUsers)
+
+				// Menu management routes (admin only)
+				adminMenu := admin.Group("/admin/menu")
+				{
+					adminMenu.POST("", menuController.CreateMenuItem)
+					adminMenu.PUT("/:id", menuController.UpdateMenuItem)
+					adminMenu.DELETE("/:id", menuController.DeleteMenuItem)
+				}
 			}
 
 			// Customer only routes
