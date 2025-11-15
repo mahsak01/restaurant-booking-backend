@@ -1,14 +1,13 @@
 package controllers
 
 import (
-	"net/http"
 	"strings"
 
 	"restaurant-booking-backend/config"
 	"restaurant-booking-backend/models"
 	"restaurant-booking-backend/utils"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
 
@@ -19,15 +18,15 @@ type AuthController struct {
 
 // SignupRequest signup request structure
 type SignupRequest struct {
-	Phone    string `json:"phone" binding:"required"`
-	Password string `json:"password" binding:"required,min=6"`
-	Name     string `json:"name" binding:"required"`
+	Phone    string `json:"phone" validate:"required"`
+	Password string `json:"password" validate:"required,min=6"`
+	Name     string `json:"name" validate:"required"`
 }
 
 // LoginRequest login request structure
 type LoginRequest struct {
-	Phone    string `json:"phone" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Phone    string `json:"phone" validate:"required"`
+	Password string `json:"password" validate:"required"`
 }
 
 // SignupResponse signup response structure
@@ -43,28 +42,33 @@ type LoginResponse struct {
 }
 
 // Signup handles user registration
-func (ac *AuthController) Signup(c *gin.Context) {
+func (ac *AuthController) Signup(c *fiber.Ctx) error {
 	var req SignupRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ac.ValidationErrorResponse(c, err.Error())
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return ac.ValidationErrorResponse(c, err.Error())
+	}
+
+	// Validate required fields
+	if req.Phone == "" || req.Password == "" || req.Name == "" {
+		return ac.ValidationErrorResponse(c, "Phone, password, and name are required")
+	}
+
+	if len(req.Password) < 6 {
+		return ac.ValidationErrorResponse(c, "Password must be at least 6 characters")
 	}
 
 	// Validate phone number
 	req.Phone = strings.TrimSpace(req.Phone)
 	if !utils.ValidatePhoneNumber(req.Phone) {
-		ac.ErrorResponse(c, http.StatusBadRequest, "Invalid phone number format")
-		return
+		return ac.ErrorResponse(c, fiber.StatusBadRequest, "Invalid phone number format")
 	}
 
 	// Check if user already exists
 	var existingUser models.User
 	if err := config.DB.Where("phone = ?", req.Phone).First(&existingUser).Error; err == nil {
-		ac.ErrorResponse(c, http.StatusConflict, "User with this phone number already exists")
-		return
+		return ac.ErrorResponse(c, fiber.StatusConflict, "User with this phone number already exists")
 	} else if err != gorm.ErrRecordNotFound {
-		ac.ErrorResponse(c, http.StatusInternalServerError, "Database error")
-		return
+		return ac.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
 	}
 
 	// Create new user
@@ -76,71 +80,67 @@ func (ac *AuthController) Signup(c *gin.Context) {
 	}
 
 	if err := config.DB.Create(&user).Error; err != nil {
-		ac.ErrorResponse(c, http.StatusInternalServerError, "Failed to create user")
-		return
+		return ac.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create user")
 	}
 
 	// Generate JWT token
 	token, err := utils.GenerateToken(user.ID, user.Phone, string(user.Role))
 	if err != nil {
-		ac.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
-		return
+		return ac.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to generate token")
 	}
 
 	// Remove password from response
 	user.Password = ""
 
-	ac.SuccessResponse(c, SignupResponse{
+	return ac.SuccessResponse(c, SignupResponse{
 		User:  user,
 		Token: token,
 	}, "User registered successfully")
 }
 
 // Login handles user login
-func (ac *AuthController) Login(c *gin.Context) {
+func (ac *AuthController) Login(c *fiber.Ctx) error {
 	var req LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ac.ValidationErrorResponse(c, err.Error())
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return ac.ValidationErrorResponse(c, err.Error())
+	}
+
+	// Validate required fields
+	if req.Phone == "" || req.Password == "" {
+		return ac.ValidationErrorResponse(c, "Phone and password are required")
 	}
 
 	// Validate phone number
 	req.Phone = strings.TrimSpace(req.Phone)
 	if !utils.ValidatePhoneNumber(req.Phone) {
-		ac.ErrorResponse(c, http.StatusBadRequest, "Invalid phone number format")
-		return
+		return ac.ErrorResponse(c, fiber.StatusBadRequest, "Invalid phone number format")
 	}
 
 	// Find user by phone
 	var user models.User
 	if err := config.DB.Where("phone = ?", req.Phone).First(&user).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			ac.ErrorResponse(c, http.StatusUnauthorized, "Invalid phone number or password")
-			return
+			return ac.ErrorResponse(c, fiber.StatusUnauthorized, "Invalid phone number or password")
 		}
-		ac.ErrorResponse(c, http.StatusInternalServerError, "Database error")
-		return
+		return ac.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
 	}
 
 	// Check password
 	if !user.CheckPassword(req.Password) {
-		ac.ErrorResponse(c, http.StatusUnauthorized, "Invalid phone number or password")
-		return
+		return ac.ErrorResponse(c, fiber.StatusUnauthorized, "Invalid phone number or password")
 	}
 
 	// Generate JWT token
 	token, err := utils.GenerateToken(user.ID, user.Phone, string(user.Role))
 	if err != nil {
-		ac.ErrorResponse(c, http.StatusInternalServerError, "Failed to generate token")
-		return
+		return ac.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to generate token")
 	}
 
 	// Remove password from response
 	user.Password = ""
 
-	ac.SuccessResponse(c, LoginResponse{
+	return ac.SuccessResponse(c, LoginResponse{
 		User:  user,
 		Token: token,
 	}, "Login successful")
 }
-

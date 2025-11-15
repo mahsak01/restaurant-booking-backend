@@ -1,12 +1,10 @@
 package controllers
 
 import (
-	"net/http"
-
 	"restaurant-booking-backend/config"
 	"restaurant-booking-backend/models"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 )
 
 // NotificationController notification controller
@@ -15,11 +13,10 @@ type NotificationController struct {
 }
 
 // GetUserNotifications gets all notifications for the current user
-func (nc *NotificationController) GetUserNotifications(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		nc.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
+func (nc *NotificationController) GetUserNotifications(c *fiber.Ctx) error {
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return nc.ErrorResponse(c, fiber.StatusUnauthorized, "User not authenticated")
 	}
 
 	var notifications []models.Notification
@@ -40,19 +37,17 @@ func (nc *NotificationController) GetUserNotifications(c *gin.Context) {
 	}
 
 	if err := query.Order("created_at DESC").Find(&notifications).Error; err != nil {
-		nc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch notifications")
-		return
+		return nc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch notifications")
 	}
 
-	nc.SuccessResponse(c, notifications, "Notifications retrieved successfully")
+	return nc.SuccessResponse(c, notifications, "Notifications retrieved successfully")
 }
 
 // GetUnreadNotificationsCount gets count of unread notifications for the current user
-func (nc *NotificationController) GetUnreadNotificationsCount(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		nc.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
+func (nc *NotificationController) GetUnreadNotificationsCount(c *fiber.Ctx) error {
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return nc.ErrorResponse(c, fiber.StatusUnauthorized, "User not authenticated")
 	}
 
 	var count int64
@@ -60,56 +55,48 @@ func (nc *NotificationController) GetUnreadNotificationsCount(c *gin.Context) {
 		Where("user_id = ? AND is_read = ?", userID.(uint), false).
 		Count(&count)
 
-	nc.SuccessResponse(c, gin.H{"count": count}, "Unread notifications count retrieved successfully")
+	return nc.SuccessResponse(c, fiber.Map{"count": count}, "Unread notifications count retrieved successfully")
 }
 
 // MarkNotificationAsRead marks a notification as read
-func (nc *NotificationController) MarkNotificationAsRead(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		nc.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
+func (nc *NotificationController) MarkNotificationAsRead(c *fiber.Ctx) error {
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return nc.ErrorResponse(c, fiber.StatusUnauthorized, "User not authenticated")
 	}
 
 	var notification models.Notification
-	if err := config.DB.Where("id = ? AND user_id = ?", c.Param("id"), userID.(uint)).First(&notification).Error; err != nil {
-		nc.ErrorResponse(c, http.StatusNotFound, "Notification not found")
-		return
+	if err := config.DB.Where("id = ? AND user_id = ?", c.Params("id"), userID.(uint)).First(&notification).Error; err != nil {
+		return nc.ErrorResponse(c, fiber.StatusNotFound, "Notification not found")
 	}
 
 	if notification.IsRead {
-		nc.SuccessResponse(c, notification, "Notification is already marked as read")
-		return
+		return nc.SuccessResponse(c, notification, "Notification is already marked as read")
 	}
 
 	notification.IsRead = true
 	if err := config.DB.Save(&notification).Error; err != nil {
-		nc.ErrorResponse(c, http.StatusInternalServerError, "Failed to mark notification as read")
-		return
+		return nc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to mark notification as read")
 	}
 
-	nc.SuccessResponse(c, notification, "Notification marked as read successfully")
+	return nc.SuccessResponse(c, notification, "Notification marked as read successfully")
 }
 
 // DeleteNotification deletes a notification
-func (nc *NotificationController) DeleteNotification(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		nc.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
+func (nc *NotificationController) DeleteNotification(c *fiber.Ctx) error {
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return nc.ErrorResponse(c, fiber.StatusUnauthorized, "User not authenticated")
 	}
 
 	var notification models.Notification
-	if err := config.DB.Where("id = ? AND user_id = ?", c.Param("id"), userID.(uint)).First(&notification).Error; err != nil {
-		nc.ErrorResponse(c, http.StatusNotFound, "Notification not found")
-		return
+	if err := config.DB.Where("id = ? AND user_id = ?", c.Params("id"), userID.(uint)).First(&notification).Error; err != nil {
+		return nc.ErrorResponse(c, fiber.StatusNotFound, "Notification not found")
 	}
 
 	if err := config.DB.Delete(&notification).Error; err != nil {
-		nc.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete notification")
-		return
+		return nc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to delete notification")
 	}
 
-	nc.SuccessResponse(c, nil, "Notification deleted successfully")
+	return nc.SuccessResponse(c, nil, "Notification deleted successfully")
 }
-

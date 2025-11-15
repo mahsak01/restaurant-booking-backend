@@ -1,9 +1,7 @@
 package utils
 
 import (
-	"net/http"
-
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 )
 
 // Response standard response structure
@@ -15,8 +13,8 @@ type Response struct {
 }
 
 // SendSuccess sends success response
-func SendSuccess(c *gin.Context, data interface{}, message string) {
-	c.JSON(http.StatusOK, Response{
+func SendSuccess(c *fiber.Ctx, data interface{}, message string) error {
+	return c.Status(fiber.StatusOK).JSON(Response{
 		Success: true,
 		Message: message,
 		Data:    data,
@@ -24,19 +22,18 @@ func SendSuccess(c *gin.Context, data interface{}, message string) {
 }
 
 // SendError sends error response
-func SendError(c *gin.Context, statusCode int, message string) {
-	c.JSON(statusCode, Response{
+func SendError(c *fiber.Ctx, statusCode int, message string) error {
+	return c.Status(statusCode).JSON(Response{
 		Success: false,
 		Message: message,
 	})
 }
 
 // SendValidationError sends validation error response
-func SendValidationError(c *gin.Context, errors interface{}) {
-	c.JSON(http.StatusBadRequest, Response{
+func SendValidationError(c *fiber.Ctx, errors interface{}) error {
+	return c.Status(fiber.StatusBadRequest).JSON(Response{
 		Success: false,
 		Message: "Validation error",
 		Errors:  errors,
 	})
 }
-

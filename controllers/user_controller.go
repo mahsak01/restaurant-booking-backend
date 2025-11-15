@@ -1,13 +1,12 @@
 package controllers
 
 import (
-	"net/http"
 	"strconv"
 
 	"restaurant-booking-backend/config"
 	"restaurant-booking-backend/models"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
 
@@ -17,7 +16,7 @@ type UserController struct {
 }
 
 // GetAllUsers gets all users (admin only)
-func (uc *UserController) GetAllUsers(c *gin.Context) {
+func (uc *UserController) GetAllUsers(c *fiber.Ctx) error {
 	var users []models.User
 	query := config.DB
 
@@ -34,59 +33,55 @@ func (uc *UserController) GetAllUsers(c *gin.Context) {
 	}
 
 	if err := query.Select("id, phone, name, role, created_at, updated_at").Order("created_at DESC").Find(&users).Error; err != nil {
-		uc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch users")
-		return
+		return uc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch users")
 	}
 
-	uc.SuccessResponse(c, users, "Users retrieved successfully")
+	return uc.SuccessResponse(c, users, "Users retrieved successfully")
 }
 
 // GetUserByID gets a single user by ID (admin only)
-func (uc *UserController) GetUserByID(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (uc *UserController) GetUserByID(c *fiber.Ctx) error {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		uc.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID")
-		return
+		return uc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid user ID")
 	}
 
 	var user models.User
 	if err := config.DB.Select("id, phone, name, role, created_at, updated_at").First(&user, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			uc.ErrorResponse(c, http.StatusNotFound, "User not found")
-			return
+			return uc.ErrorResponse(c, fiber.StatusNotFound, "User not found")
 		}
-		uc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch user")
-		return
+		return uc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch user")
 	}
 
-	uc.SuccessResponse(c, user, "User retrieved successfully")
+	return uc.SuccessResponse(c, user, "User retrieved successfully")
 }
 
 // UpdateUserRole updates user role (admin only)
-func (uc *UserController) UpdateUserRole(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (uc *UserController) UpdateUserRole(c *fiber.Ctx) error {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		uc.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID")
-		return
+		return uc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid user ID")
 	}
 
 	var user models.User
 	if err := config.DB.First(&user, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			uc.ErrorResponse(c, http.StatusNotFound, "User not found")
-			return
+			return uc.ErrorResponse(c, fiber.StatusNotFound, "User not found")
 		}
-		uc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch user")
-		return
+		return uc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch user")
 	}
 
 	var req struct {
-		Role models.UserRole `json:"role" binding:"required"`
+		Role models.UserRole `json:"role"`
 	}
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		uc.ValidationErrorResponse(c, err.Error())
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return uc.ValidationErrorResponse(c, err.Error())
+	}
+
+	if req.Role == "" {
+		return uc.ValidationErrorResponse(c, "Role is required")
 	}
 
 	// Validate role
@@ -102,37 +97,32 @@ func (uc *UserController) UpdateUserRole(c *gin.Context) {
 	}
 
 	if !validRole {
-		uc.ErrorResponse(c, http.StatusBadRequest, "Invalid role")
-		return
+		return uc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid role")
 	}
 
 	user.Role = req.Role
 	if err := config.DB.Save(&user).Error; err != nil {
-		uc.ErrorResponse(c, http.StatusInternalServerError, "Failed to update user role")
-		return
+		return uc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update user role")
 	}
 
 	// Return user without password
 	user.Password = ""
-	uc.SuccessResponse(c, user, "User role updated successfully")
+	return uc.SuccessResponse(c, user, "User role updated successfully")
 }
 
 // DeleteUser deletes a user (admin only)
-func (uc *UserController) DeleteUser(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (uc *UserController) DeleteUser(c *fiber.Ctx) error {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		uc.ErrorResponse(c, http.StatusBadRequest, "Invalid user ID")
-		return
+		return uc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid user ID")
 	}
 
 	var user models.User
 	if err := config.DB.First(&user, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			uc.ErrorResponse(c, http.StatusNotFound, "User not found")
-			return
+			return uc.ErrorResponse(c, fiber.StatusNotFound, "User not found")
 		}
-		uc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch user")
-		return
+		return uc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch user")
 	}
 
 	// Check if user has active reservations
@@ -144,15 +134,12 @@ func (uc *UserController) DeleteUser(c *gin.Context) {
 		}).Count(&activeReservations)
 
 	if activeReservations > 0 {
-		uc.ErrorResponse(c, http.StatusBadRequest, "Cannot delete user with active reservations")
-		return
+		return uc.ErrorResponse(c, fiber.StatusBadRequest, "Cannot delete user with active reservations")
 	}
 
 	if err := config.DB.Delete(&user).Error; err != nil {
-		uc.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete user")
-		return
+		return uc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to delete user")
 	}
 
-	uc.SuccessResponse(c, nil, "User deleted successfully")
+	return uc.SuccessResponse(c, nil, "User deleted successfully")
 }
-

@@ -8,9 +8,13 @@ import (
 
 // LoadConfig loads .env file
 func LoadConfig() {
-	err := godotenv.Load()
+	// Try to load .env file from current directory
+	err := godotenv.Load(".env")
 	if err != nil {
-		log.Println(".env file not found, using system environment variables")
+		// If not found, try to load from project root
+		err = godotenv.Load()
+		if err != nil {
+			log.Println(".env file not found, using system environment variables")
+		}
 	}
 }
-

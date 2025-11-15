@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"net/http"
 	"strconv"
 	"time"
 
@@ -9,7 +8,7 @@ import (
 	"restaurant-booking-backend/models"
 	"restaurant-booking-backend/services"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
 
@@ -39,31 +38,27 @@ type UpdateReservationStatusRequest struct {
 }
 
 // CreateReservation creates a new reservation (customer only)
-func (rc *ReservationController) CreateReservation(c *gin.Context) {
+func (rc *ReservationController) CreateReservation(c *fiber.Ctx) error {
 	// Get user ID from context (set by auth middleware)
-	userID, exists := c.Get("user_id")
-	if !exists {
-		rc.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
-		return
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return rc.ErrorResponse(c, fiber.StatusUnauthorized, "User not authenticated")
 	}
 
 	var req CreateReservationRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		rc.ValidationErrorResponse(c, err.Error())
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return rc.ValidationErrorResponse(c, err.Error())
 	}
 
 	// Parse date and time
 	reservationDate, err := time.Parse("2006-01-02", req.Date)
 	if err != nil {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Invalid date format. Use YYYY-MM-DD")
-		return
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid date format. Use YYYY-MM-DD")
 	}
 
 	reservationTime, err := time.Parse("15:04", req.Time)
 	if err != nil {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Invalid time format. Use HH:MM")
-		return
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid time format. Use HH:MM")
 	}
 
 	// Combine date and time
@@ -78,25 +73,21 @@ func (rc *ReservationController) CreateReservation(c *gin.Context) {
 
 	// Check if reservation is in the past
 	if reservationDateTime.Before(time.Now()) {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Cannot make reservation in the past")
-		return
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Cannot make reservation in the past")
 	}
 
 	// Check if table exists
 	var table models.Table
 	if err := config.DB.First(&table, req.TableID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			rc.ErrorResponse(c, http.StatusNotFound, "Table not found")
-			return
+			return rc.ErrorResponse(c, fiber.StatusNotFound, "Table not found")
 		}
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch table")
-		return
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch table")
 	}
 
 	// Check if table is available
 	if table.Status != models.TableStatusAvailable {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Table is not available")
-		return
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Table is not available")
 	}
 
 	// Check if table is already reserved at this date and time
@@ -109,10 +100,10 @@ func (rc *ReservationController) CreateReservation(c *gin.Context) {
 			models.ReservationStatusPending,
 			models.ReservationStatusConfirmed,
 		}).First(&existingReservation).Error; err == nil {
-		rc.ErrorResponse(c, http.StatusConflict, "Table is already reserved at this date and time")
+		return rc.ErrorResponse(c, fiber.StatusConflict, "Table is already reserved at this date and time")
 		return
 	} else if err != gorm.ErrRecordNotFound {
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Database error")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
 		return
 	}
 
@@ -126,7 +117,7 @@ func (rc *ReservationController) CreateReservation(c *gin.Context) {
 	}
 
 	if err := config.DB.Create(&reservation).Error; err != nil {
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to create reservation")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create reservation")
 		return
 	}
 
@@ -142,14 +133,14 @@ func (rc *ReservationController) CreateReservation(c *gin.Context) {
 		go rc.notificationService.SendReservationCreatedNotification(&reservation)
 	}
 
-	rc.SuccessResponse(c, reservation, "Reservation created successfully")
+		return rc.SuccessResponse(c, reservation, "Reservation created successfully")
 }
 
 // GetUserReservations gets all reservations for the current user (customer only)
-func (rc *ReservationController) GetUserReservations(c *gin.Context) {
-	userID, exists := c.Get("user_id")
-	if !exists {
-		rc.ErrorResponse(c, http.StatusUnauthorized, "User not authenticated")
+func (rc *ReservationController) GetUserReservations(c *fiber.Ctx) error) {
+	userID := c.Locals("user_id")
+	if userID == nil {
+		return rc.ErrorResponse(c, fiber.StatusUnauthorized, "User not authenticated")
 		return
 	}
 
@@ -169,29 +160,29 @@ func (rc *ReservationController) GetUserReservations(c *gin.Context) {
 	}
 
 	if err := query.Order("date DESC, time DESC").Find(&reservations).Error; err != nil {
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch reservations")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservations")
 		return
 	}
 
-	rc.SuccessResponse(c, reservations, "Reservations retrieved successfully")
+		return rc.SuccessResponse(c, reservations, "Reservations retrieved successfully")
 }
 
 // GetReservationByID gets a single reservation by ID
-func (rc *ReservationController) GetReservationByID(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (rc *ReservationController) GetReservationByID(c *fiber.Ctx) error) {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Invalid reservation ID")
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid reservation ID")
 		return
 	}
 
-	userID, exists := c.Get("user_id")
-	userRole, _ := c.Get("user_role")
+	userID, exists := c.Locals("user_id")
+	userRole, _ := c.Locals("user_role")
 
 	var reservation models.Reservation
 	query := config.DB.Preload("User").Preload("Table")
 
 	// If user is customer, only show their own reservations
-	if exists && userRole == "customer" {
+	if userID != nil && userRole == "customer" {
 		query = query.Where("id = ? AND user_id = ?", id, userID.(uint))
 	} else {
 		query = query.Where("id = ?", id)
@@ -199,32 +190,32 @@ func (rc *ReservationController) GetReservationByID(c *gin.Context) {
 
 	if err := query.First(&reservation).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			rc.ErrorResponse(c, http.StatusNotFound, "Reservation not found")
+			return rc.ErrorResponse(c, fiber.StatusNotFound, "Reservation not found")
 			return
 		}
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch reservation")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservation")
 		return
 	}
 
-	rc.SuccessResponse(c, reservation, "Reservation retrieved successfully")
+		return rc.SuccessResponse(c, reservation, "Reservation retrieved successfully")
 }
 
 // CancelReservation cancels a reservation (customer can cancel their own, admin can cancel any)
-func (rc *ReservationController) CancelReservation(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (rc *ReservationController) CancelReservation(c *fiber.Ctx) error) {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Invalid reservation ID")
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid reservation ID")
 		return
 	}
 
-	userID, exists := c.Get("user_id")
-	userRole, _ := c.Get("user_role")
+	userID, exists := c.Locals("user_id")
+	userRole, _ := c.Locals("user_role")
 
 	var reservation models.Reservation
 	query := config.DB
 
 	// If user is customer, only allow canceling their own reservations
-	if exists && userRole == "customer" {
+	if userID != nil && userRole == "customer" {
 		query = query.Where("id = ? AND user_id = ?", id, userID.(uint))
 	} else {
 		query = query.Where("id = ?", id)
@@ -232,28 +223,28 @@ func (rc *ReservationController) CancelReservation(c *gin.Context) {
 
 	if err := query.First(&reservation).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			rc.ErrorResponse(c, http.StatusNotFound, "Reservation not found")
+			return rc.ErrorResponse(c, fiber.StatusNotFound, "Reservation not found")
 			return
 		}
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch reservation")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservation")
 		return
 	}
 
 	// Check if reservation can be cancelled
 	if reservation.Status == models.ReservationStatusCancelled {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Reservation is already cancelled")
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Reservation is already cancelled")
 		return
 	}
 
 	if reservation.Status == models.ReservationStatusCompleted {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Cannot cancel completed reservation")
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Cannot cancel completed reservation")
 		return
 	}
 
 	// Update reservation status
 	reservation.Status = models.ReservationStatusCancelled
 	if err := config.DB.Save(&reservation).Error; err != nil {
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to cancel reservation")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to cancel reservation")
 		return
 	}
 
@@ -279,11 +270,11 @@ func (rc *ReservationController) CancelReservation(c *gin.Context) {
 		go rc.notificationService.SendReservationCancelledNotification(&reservation)
 	}
 
-	rc.SuccessResponse(c, reservation, "Reservation cancelled successfully")
+		return rc.SuccessResponse(c, reservation, "Reservation cancelled successfully")
 }
 
 // GetAllReservations gets all reservations (admin only)
-func (rc *ReservationController) GetAllReservations(c *gin.Context) {
+func (rc *ReservationController) GetAllReservations(c *fiber.Ctx) error) {
 	var reservations []models.Reservation
 	query := config.DB.Preload("User").Preload("Table")
 
@@ -312,35 +303,34 @@ func (rc *ReservationController) GetAllReservations(c *gin.Context) {
 	}
 
 	if err := query.Order("date DESC, time DESC").Find(&reservations).Error; err != nil {
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch reservations")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservations")
 		return
 	}
 
-	rc.SuccessResponse(c, reservations, "Reservations retrieved successfully")
+		return rc.SuccessResponse(c, reservations, "Reservations retrieved successfully")
 }
 
 // UpdateReservationStatus updates reservation status (admin only)
-func (rc *ReservationController) UpdateReservationStatus(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (rc *ReservationController) UpdateReservationStatus(c *fiber.Ctx) error) {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Invalid reservation ID")
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid reservation ID")
 		return
 	}
 
 	var reservation models.Reservation
 	if err := config.DB.Preload("Table").First(&reservation, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			rc.ErrorResponse(c, http.StatusNotFound, "Reservation not found")
+			return rc.ErrorResponse(c, fiber.StatusNotFound, "Reservation not found")
 			return
 		}
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch reservation")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservation")
 		return
 	}
 
 	var req UpdateReservationStatusRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		rc.ValidationErrorResponse(c, err.Error())
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return rc.ValidationErrorResponse(c, err.Error())
 	}
 
 	// Validate status
@@ -358,15 +348,14 @@ func (rc *ReservationController) UpdateReservationStatus(c *gin.Context) {
 	}
 
 	if !validStatus {
-		rc.ErrorResponse(c, http.StatusBadRequest, "Invalid reservation status")
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid reservation status")
 		return
 	}
 
-	oldStatus := reservation.Status
 	reservation.Status = req.Status
 
 	if err := config.DB.Save(&reservation).Error; err != nil {
-		rc.ErrorResponse(c, http.StatusInternalServerError, "Failed to update reservation status")
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update reservation status")
 		return
 	}
 
@@ -399,11 +388,11 @@ func (rc *ReservationController) UpdateReservationStatus(c *gin.Context) {
 		go rc.notificationService.SendReservationStatusUpdatedNotification(&reservation)
 	}
 
-	rc.SuccessResponse(c, reservation, "Reservation status updated successfully")
+		return rc.SuccessResponse(c, reservation, "Reservation status updated successfully")
 }
 
 // GetReservationStatuses gets all available reservation statuses
-func (rc *ReservationController) GetReservationStatuses(c *gin.Context) {
+func (rc *ReservationController) GetReservationStatuses(c *fiber.Ctx) error) {
 	statuses := []map[string]string{
 		{"value": string(models.ReservationStatusPending), "label": "Pending"},
 		{"value": string(models.ReservationStatusConfirmed), "label": "Confirmed"},
@@ -411,6 +400,6 @@ func (rc *ReservationController) GetReservationStatuses(c *gin.Context) {
 		{"value": string(models.ReservationStatusCompleted), "label": "Completed"},
 	}
 
-	rc.SuccessResponse(c, statuses, "Reservation statuses retrieved successfully")
+		return rc.SuccessResponse(c, statuses, "Reservation statuses retrieved successfully")
 }
 

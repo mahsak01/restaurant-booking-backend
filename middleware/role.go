@@ -1,56 +1,47 @@
 package middleware
 
 import (
-	"net/http"
-
 	"restaurant-booking-backend/models"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 )
 
 // RequireRole middleware to check user role
-func RequireRole(requiredRole models.UserRole) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		userRole, exists := c.Get("user_role")
-		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{
+func RequireRole(requiredRole models.UserRole) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userRole := c.Locals("user_role")
+		if userRole == nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 				"success": false,
 				"message": "User role not found",
 			})
-			c.Abort()
-			return
 		}
 
 		roleStr, ok := userRole.(string)
 		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"success": false,
 				"message": "Invalid role type",
 			})
-			c.Abort()
-			return
 		}
 
 		if models.UserRole(roleStr) != requiredRole {
-			c.JSON(http.StatusForbidden, gin.H{
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 				"success": false,
 				"message": "Insufficient permissions",
 			})
-			c.Abort()
-			return
 		}
 
-		c.Next()
+		return c.Next()
 	}
 }
 
 // RequireAdmin middleware to check if user is admin
-func RequireAdmin() gin.HandlerFunc {
+func RequireAdmin() fiber.Handler {
 	return RequireRole(models.RoleAdmin)
 }
 
 // RequireCustomer middleware to check if user is customer
-func RequireCustomer() gin.HandlerFunc {
+func RequireCustomer() fiber.Handler {
 	return RequireRole(models.RoleCustomer)
 }
-

@@ -8,7 +8,8 @@ import (
 	"restaurant-booking-backend/models"
 	"restaurant-booking-backend/routes"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 )
 
 func main() {
@@ -30,19 +31,30 @@ func main() {
 	}
 	log.Println("Database migration completed")
 
-	// Set Gin mode
-	if os.Getenv("GIN_MODE") == "" {
-		gin.SetMode(gin.DebugMode)
-	}
-
-	// Create Gin router
-	router := gin.Default()
+	// Create Fiber app
+	app := fiber.New(fiber.Config{
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			code := fiber.StatusInternalServerError
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+			}
+			return c.Status(code).JSON(fiber.Map{
+				"success": false,
+				"message": err.Error(),
+			})
+		},
+	})
 
 	// Setup CORS middleware
-	router.Use(corsMiddleware())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     "*",
+		AllowCredentials: true,
+		AllowHeaders:     "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With",
+		AllowMethods:     "POST, OPTIONS, GET, PUT, DELETE, PATCH",
+	}))
 
 	// Setup routes
-	routes.SetupRoutes(router)
+	routes.SetupRoutes(app)
 
 	// Read port from environment variable or use default port
 	port := os.Getenv("PORT")
@@ -52,24 +64,7 @@ func main() {
 
 	// Start server
 	log.Printf("Server is running on port %s...", port)
-	if err := router.Run(":" + port); err != nil {
+	if err := app.Listen(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
-	}
-}
-
-// corsMiddleware CORS middleware
-func corsMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-
-		c.Next()
 	}
 }

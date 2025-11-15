@@ -19,8 +19,8 @@ func InitDB() {
 	// Read environment variables
 	host := getEnv("DB_HOST", "localhost")
 	user := getEnv("DB_USER", "postgres")
-	password := getEnv("DB_PASSWORD", "postgres")
-	dbname := getEnv("DB_NAME", "restaurant_booking")
+	password := getEnv("DB_PASSWORD", "8069")
+	dbname := getEnv("DB_NAME", "restaurant")
 	port := getEnv("DB_PORT", "5432")
 	sslmode := getEnv("DB_SSLMODE", "disable")
 
@@ -53,4 +53,3 @@ func getEnv(key, defaultValue string) string {
 func GetDB() *gorm.DB {
 	return DB
 }
-

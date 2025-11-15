@@ -1,13 +1,12 @@
 package controllers
 
 import (
-	"net/http"
 	"strconv"
 
 	"restaurant-booking-backend/config"
 	"restaurant-booking-backend/models"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
 
@@ -35,7 +34,7 @@ type UpdateMenuItemRequest struct {
 }
 
 // GetAllMenuItems gets all menu items (public)
-func (mc *MenuController) GetAllMenuItems(c *gin.Context) {
+func (mc *MenuController) GetAllMenuItems(c *fiber.Ctx) error {
 	var menuItems []models.MenuItem
 	query := config.DB
 
@@ -52,37 +51,33 @@ func (mc *MenuController) GetAllMenuItems(c *gin.Context) {
 	}
 
 	if err := query.Order("created_at DESC").Find(&menuItems).Error; err != nil {
-		mc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch menu items")
-		return
+		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch menu items")
 	}
 
-	mc.SuccessResponse(c, menuItems, "Menu items retrieved successfully")
+	return mc.SuccessResponse(c, menuItems, "Menu items retrieved successfully")
 }
 
 // GetMenuItemByID gets a single menu item by ID (public)
-func (mc *MenuController) GetMenuItemByID(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (mc *MenuController) GetMenuItemByID(c *fiber.Ctx) error {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		mc.ErrorResponse(c, http.StatusBadRequest, "Invalid menu item ID")
-		return
+		return mc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid menu item ID")
 	}
 
 	var menuItem models.MenuItem
 	if err := config.DB.First(&menuItem, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			mc.ErrorResponse(c, http.StatusNotFound, "Menu item not found")
-			return
+			return mc.ErrorResponse(c, fiber.StatusNotFound, "Menu item not found")
 		}
-		mc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch menu item")
-		return
+		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch menu item")
 	}
 
-	mc.SuccessResponse(c, menuItem, "Menu item retrieved successfully")
+	return mc.SuccessResponse(c, menuItem, "Menu item retrieved successfully")
 }
 
 // GetMenuItemsByCategory gets menu items by category (public)
-func (mc *MenuController) GetMenuItemsByCategory(c *gin.Context) {
-	category := c.Param("category")
+func (mc *MenuController) GetMenuItemsByCategory(c *fiber.Ctx) error {
+	category := c.Params("category")
 
 	// Validate category
 	validCategory := false
@@ -99,25 +94,26 @@ func (mc *MenuController) GetMenuItemsByCategory(c *gin.Context) {
 	}
 
 	if !validCategory {
-		mc.ErrorResponse(c, http.StatusBadRequest, "Invalid category")
-		return
+		return mc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid category")
 	}
 
 	var menuItems []models.MenuItem
 	if err := config.DB.Where("category = ?", category).Order("created_at DESC").Find(&menuItems).Error; err != nil {
-		mc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch menu items")
-		return
+		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch menu items")
 	}
 
-	mc.SuccessResponse(c, menuItems, "Menu items retrieved successfully")
+	return mc.SuccessResponse(c, menuItems, "Menu items retrieved successfully")
 }
 
 // CreateMenuItem creates a new menu item (admin only)
-func (mc *MenuController) CreateMenuItem(c *gin.Context) {
+func (mc *MenuController) CreateMenuItem(c *fiber.Ctx) error {
 	var req CreateMenuItemRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		mc.ValidationErrorResponse(c, err.Error())
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return mc.ValidationErrorResponse(c, err.Error())
+	}
+
+	if req.Name == "" || req.Price <= 0 || req.Category == "" {
+		return mc.ValidationErrorResponse(c, "Name, price, and category are required")
 	}
 
 	menuItem := models.MenuItem{
@@ -129,35 +125,30 @@ func (mc *MenuController) CreateMenuItem(c *gin.Context) {
 	}
 
 	if err := config.DB.Create(&menuItem).Error; err != nil {
-		mc.ErrorResponse(c, http.StatusInternalServerError, "Failed to create menu item")
-		return
+		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create menu item")
 	}
 
-	mc.SuccessResponse(c, menuItem, "Menu item created successfully")
+	return mc.SuccessResponse(c, menuItem, "Menu item created successfully")
 }
 
 // UpdateMenuItem updates an existing menu item (admin only)
-func (mc *MenuController) UpdateMenuItem(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (mc *MenuController) UpdateMenuItem(c *fiber.Ctx) error {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		mc.ErrorResponse(c, http.StatusBadRequest, "Invalid menu item ID")
-		return
+		return mc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid menu item ID")
 	}
 
 	var menuItem models.MenuItem
 	if err := config.DB.First(&menuItem, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			mc.ErrorResponse(c, http.StatusNotFound, "Menu item not found")
-			return
+			return mc.ErrorResponse(c, fiber.StatusNotFound, "Menu item not found")
 		}
-		mc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch menu item")
-		return
+		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch menu item")
 	}
 
 	var req UpdateMenuItemRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		mc.ValidationErrorResponse(c, err.Error())
-		return
+	if err := c.BodyParser(&req); err != nil {
+		return mc.ValidationErrorResponse(c, err.Error())
 	}
 
 	// Update fields if provided
@@ -178,41 +169,36 @@ func (mc *MenuController) UpdateMenuItem(c *gin.Context) {
 	}
 
 	if err := config.DB.Save(&menuItem).Error; err != nil {
-		mc.ErrorResponse(c, http.StatusInternalServerError, "Failed to update menu item")
-		return
+		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update menu item")
 	}
 
-	mc.SuccessResponse(c, menuItem, "Menu item updated successfully")
+	return mc.SuccessResponse(c, menuItem, "Menu item updated successfully")
 }
 
 // DeleteMenuItem deletes a menu item (admin only)
-func (mc *MenuController) DeleteMenuItem(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+func (mc *MenuController) DeleteMenuItem(c *fiber.Ctx) error {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		mc.ErrorResponse(c, http.StatusBadRequest, "Invalid menu item ID")
-		return
+		return mc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid menu item ID")
 	}
 
 	var menuItem models.MenuItem
 	if err := config.DB.First(&menuItem, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			mc.ErrorResponse(c, http.StatusNotFound, "Menu item not found")
-			return
+			return mc.ErrorResponse(c, fiber.StatusNotFound, "Menu item not found")
 		}
-		mc.ErrorResponse(c, http.StatusInternalServerError, "Failed to fetch menu item")
-		return
+		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch menu item")
 	}
 
 	if err := config.DB.Delete(&menuItem).Error; err != nil {
-		mc.ErrorResponse(c, http.StatusInternalServerError, "Failed to delete menu item")
-		return
+		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to delete menu item")
 	}
 
-	mc.SuccessResponse(c, nil, "Menu item deleted successfully")
+	return mc.SuccessResponse(c, nil, "Menu item deleted successfully")
 }
 
 // GetCategories gets all available menu categories (public)
-func (mc *MenuController) GetCategories(c *gin.Context) {
+func (mc *MenuController) GetCategories(c *fiber.Ctx) error {
 	categories := []map[string]string{
 		{"value": string(models.CategoryAppetizer), "label": "Appetizer"},
 		{"value": string(models.CategoryMain), "label": "Main Course"},
@@ -220,6 +206,5 @@ func (mc *MenuController) GetCategories(c *gin.Context) {
 		{"value": string(models.CategoryDrink), "label": "Drink"},
 	}
 
-	mc.SuccessResponse(c, categories, "Categories retrieved successfully")
+	return mc.SuccessResponse(c, categories, "Categories retrieved successfully")
 }
-
