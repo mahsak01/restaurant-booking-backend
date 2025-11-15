@@ -18,6 +18,7 @@ var (
 	notificationController = controllers.NotificationController{}
 	userController         = controllers.UserController{}
 	categoryController     = controllers.CategoryController{}
+	orderController        = controllers.OrderController{}
 )
 
 // SetupRoutes sets up API routes
@@ -112,6 +113,16 @@ func SetupRoutes(app *fiber.App) {
 				adminReservations.Put("/:id/status", reservationController.UpdateReservationStatus)
 				adminReservations.Delete("/:id", reservationController.CancelReservation)
 			}
+
+			// Order management routes (admin only)
+			adminOrders := admin.Group("/admin/orders")
+			{
+				adminOrders.Post("", orderController.CreateOrderByAdmin)
+				adminOrders.Get("", orderController.GetAllOrders)
+				adminOrders.Get("/statuses", orderController.GetOrderStatuses)
+				adminOrders.Get("/:id", orderController.GetOrderByID)
+				adminOrders.Put("/:id/status", orderController.UpdateOrderStatus)
+			}
 		}
 
 		// Customer only routes
@@ -124,6 +135,14 @@ func SetupRoutes(app *fiber.App) {
 				customerReservations.Get("", reservationController.GetUserReservations)
 				customerReservations.Get("/:id", reservationController.GetReservationByID)
 				customerReservations.Delete("/:id", reservationController.CancelReservation)
+			}
+
+			// Order routes (customer)
+			customerOrders := customer.Group("/orders")
+			{
+				customerOrders.Post("", orderController.CreateOrder)
+				customerOrders.Get("", orderController.GetUserOrders)
+				customerOrders.Get("/:id", orderController.GetOrderByID)
 			}
 		}
 

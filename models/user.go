@@ -25,6 +25,7 @@ type User struct {
 	// Relationships
 	Reservations  []Reservation  `gorm:"foreignKey:UserID" json:"reservations,omitempty"`
 	Notifications []Notification `gorm:"foreignKey:UserID" json:"notifications,omitempty"`
+	Orders        []Order        `gorm:"foreignKey:UserID" json:"orders,omitempty"`
 }
 
 // BeforeCreate hash password before creating user

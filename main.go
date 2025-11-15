@@ -52,6 +52,8 @@ func main() {
 		&models.Reservation{},
 		&models.Notification{},
 		&models.Category{},
+		&models.Order{},
+		&models.OrderItem{},
 	); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
