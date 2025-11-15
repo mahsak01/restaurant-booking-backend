@@ -1,6 +1,26 @@
+// @title Restaurant Booking API
+// @version 1.0
+// @description RESTful API for restaurant table booking system
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name API Support
+// @contact.email support@restaurant.com
+
+// @license.name Apache 2.0
+// @license.url http://www.apache.org/licenses/LICENSE-2.0.html
+
+// @host localhost:8080
+// @BasePath /api/v1
+
+// @securityDefinitions.apikey Bearer
+// @in header
+// @name Authorization
+// @description Type "Bearer" followed by a space and JWT token.
+
 package main
 
 import (
+	_ "embed"
 	"log"
 	"os"
 
@@ -10,7 +30,12 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/swagger"
 )
+
+//go:embed docs/swagger.json
+var swaggerJSON []byte
 
 func main() {
 	// Load configuration
@@ -26,6 +51,7 @@ func main() {
 		&models.MenuItem{},
 		&models.Reservation{},
 		&models.Notification{},
+		&models.Category{},
 	); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
@@ -45,12 +71,32 @@ func main() {
 		},
 	})
 
+	// Setup Logger middleware - logs all requests
+	app.Use(logger.New(logger.Config{
+		Format:     "${time} | ${status} | ${latency} | ${method} | ${path} | ${ip} | ${error}\n",
+		TimeFormat: "2006-01-02 15:04:05",
+		TimeZone:   "Asia/Tehran",
+		Output:     os.Stdout,
+	}))
+
 	// Setup CORS middleware
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "*",
+		AllowOrigins:     "http://localhost:3000",
 		AllowCredentials: true,
 		AllowHeaders:     "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With",
 		AllowMethods:     "POST, OPTIONS, GET, PUT, DELETE, PATCH",
+	}))
+
+	// Serve Swagger JSON
+	app.Get("/swagger/doc.json", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "application/json")
+		return c.Send(swaggerJSON)
+	})
+
+	// Swagger UI route
+	app.Get("/swagger/*", swagger.New(swagger.Config{
+		URL:         "/swagger/doc.json",
+		DeepLinking: true,
 	}))
 
 	// Setup routes

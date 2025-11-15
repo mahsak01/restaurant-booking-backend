@@ -18,9 +18,11 @@ type AuthController struct {
 
 // SignupRequest signup request structure
 type SignupRequest struct {
-	Phone    string `json:"phone" validate:"required"`
-	Password string `json:"password" validate:"required,min=6"`
-	Name     string `json:"name" validate:"required"`
+	Phone    string          `json:"phone" validate:"required"`
+	Password string          `json:"password" validate:"required,min=6"`
+	Name     string          `json:"name" validate:"required"`
+	LastName string          `json:"last_name"` // Optional
+	Role     models.UserRole `json:"role"`      // Optional, defaults to customer
 }
 
 // LoginRequest login request structure
@@ -63,20 +65,41 @@ func (ac *AuthController) Signup(c *fiber.Ctx) error {
 		return ac.ErrorResponse(c, fiber.StatusBadRequest, "Invalid phone number format")
 	}
 
-	// Check if user already exists
+	// Validate role if provided
+	userRole := models.RoleCustomer // Default role
+	if req.Role != "" {
+		// Only accept "admin" or "customer", reject "user"
+		normalizedRole := strings.ToLower(strings.TrimSpace(string(req.Role)))
+		if normalizedRole == "user" {
+			return ac.ErrorResponse(c, fiber.StatusBadRequest, "Invalid role 'user'. Please use 'customer' instead. Valid roles are: 'admin' or 'customer'")
+		}
+		if normalizedRole == string(models.RoleAdmin) {
+			userRole = models.RoleAdmin
+		} else if normalizedRole == string(models.RoleCustomer) {
+			userRole = models.RoleCustomer
+		} else {
+			// Invalid role
+			return ac.ErrorResponse(c, fiber.StatusBadRequest, "Invalid role. Must be 'admin' or 'customer'")
+		}
+	}
+
+	// Check if user already exists (not including soft-deleted users)
 	var existingUser models.User
 	if err := config.DB.Where("phone = ?", req.Phone).First(&existingUser).Error; err == nil {
+		// Active user exists
 		return ac.ErrorResponse(c, fiber.StatusConflict, "User with this phone number already exists")
 	} else if err != gorm.ErrRecordNotFound {
 		return ac.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
 	}
+	// If user doesn't exist or was soft-deleted, proceed to create new user
 
 	// Create new user
 	user := models.User{
 		Phone:    req.Phone,
 		Password: req.Password, // Will be hashed in BeforeCreate hook
 		Name:     req.Name,
-		Role:     models.RoleCustomer, // Default role
+		LastName: req.LastName,
+		Role:     userRole,
 	}
 
 	if err := config.DB.Create(&user).Error; err != nil {

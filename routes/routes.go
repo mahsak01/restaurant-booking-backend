@@ -17,6 +17,7 @@ var (
 	reservationController  = controllers.NewReservationController()
 	notificationController = controllers.NotificationController{}
 	userController         = controllers.UserController{}
+	categoryController     = controllers.CategoryController{}
 )
 
 // SetupRoutes sets up API routes
@@ -50,6 +51,13 @@ func SetupRoutes(app *fiber.App) {
 		tables.Get("/statuses", tableController.GetTableStatuses)
 	}
 
+	// Category routes (public - for customers to view categories)
+	categories := api.Group("/categories")
+	{
+		categories.Get("", categoryController.GetAllCategories)
+		categories.Get("/:id", categoryController.GetCategoryByID)
+	}
+
 	// Protected routes
 	protected := api.Group("", middleware.AuthMiddleware())
 	{
@@ -76,6 +84,14 @@ func SetupRoutes(app *fiber.App) {
 				adminMenu.Delete("/:id", menuController.DeleteMenuItem)
 			}
 
+			// Category management routes (admin only)
+			adminCategories := admin.Group("/admin/categories")
+			{
+				adminCategories.Post("", categoryController.CreateCategory)
+				adminCategories.Put("/:id", categoryController.UpdateCategory)
+				adminCategories.Delete("/:id", categoryController.DeleteCategory)
+			}
+
 			// Table management routes (admin only)
 			adminTables := admin.Group("/admin/tables")
 			{
@@ -89,6 +105,7 @@ func SetupRoutes(app *fiber.App) {
 			// Reservation management routes (admin only)
 			adminReservations := admin.Group("/admin/reservations")
 			{
+				adminReservations.Post("", reservationController.CreateReservationByAdmin)
 				adminReservations.Get("", reservationController.GetAllReservations)
 				adminReservations.Get("/statuses", reservationController.GetReservationStatuses)
 				adminReservations.Get("/:id", reservationController.GetReservationByID)
