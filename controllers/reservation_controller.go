@@ -2,12 +2,14 @@ package controllers
 
 import (
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"restaurant-booking-backend/config"
 	"restaurant-booking-backend/models"
 	"restaurant-booking-backend/services"
+	"restaurant-booking-backend/utils"
 
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -35,6 +37,16 @@ type CreateReservationRequest struct {
 	TableID uint   `json:"table_id" binding:"required"`
 	Date    string `json:"date" binding:"required"` // Format: "2006-01-02"
 	Time    string `json:"time" binding:"required"` // Format: "15:04"
+}
+
+// CreateReservationByAdminRequest create reservation by admin request structure
+type CreateReservationByAdminRequest struct {
+	Phone    string `json:"phone" binding:"required"` // User phone number
+	Name     string `json:"name" binding:"required"`  // First name (required if user doesn't exist)
+	LastName string `json:"last_name"`                // Last name (optional)
+	TableID  uint   `json:"table_id" binding:"required"`
+	Date     string `json:"date" binding:"required"` // Format: "2006-01-02"
+	Time     string `json:"time" binding:"required"` // Format: "15:04"
 }
 
 // UpdateReservationStatusRequest update reservation status request structure
@@ -502,4 +514,172 @@ func (rc *ReservationController) GetReservationStatuses(c *fiber.Ctx) error {
 	}
 
 	return rc.SuccessResponse(c, statuses, "Reservation statuses retrieved successfully")
+}
+
+// CreateReservationByAdmin creates a reservation by admin for a user (searches by phone, creates user if not exists)
+func (rc *ReservationController) CreateReservationByAdmin(c *fiber.Ctx) error {
+	var req CreateReservationByAdminRequest
+	if err := c.BodyParser(&req); err != nil {
+		return rc.ValidationErrorResponse(c, err.Error())
+	}
+
+	// Validate phone number
+	req.Phone = strings.TrimSpace(req.Phone)
+	if !utils.ValidatePhoneNumber(req.Phone) {
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid phone number format")
+	}
+
+	// Validate name
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Name is required")
+	}
+
+	// Trim last name if provided
+	req.LastName = strings.TrimSpace(req.LastName)
+
+	// Parse date and time
+	reservationDate, err := time.Parse("2006-01-02", req.Date)
+	if err != nil {
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid date format. Use YYYY-MM-DD")
+	}
+
+	reservationTime, err := time.Parse("15:04", req.Time)
+	if err != nil {
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid time format. Use HH:MM")
+	}
+
+	// Combine date and time
+	reservationDateTime := time.Date(
+		reservationDate.Year(),
+		reservationDate.Month(),
+		reservationDate.Day(),
+		reservationTime.Hour(),
+		reservationTime.Minute(),
+		0, 0, time.UTC,
+	)
+
+	// Check if reservation is in the past
+	if reservationDateTime.Before(time.Now()) {
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Cannot make reservation in the past")
+	}
+
+	// Get or create user by phone
+	var user models.User
+	// Check if active user exists
+	if err := config.DB.Where("phone = ?", req.Phone).First(&user).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// User doesn't exist (or was soft-deleted), create new user without password
+			user = models.User{
+				Phone:    req.Phone,
+				Password: "", // Empty password - user must set password to login
+				Name:     req.Name,
+				LastName: req.LastName,
+				Role:     models.RoleCustomer,
+			}
+			if err := config.DB.Create(&user).Error; err != nil {
+				return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create user")
+			}
+		} else {
+			return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Database error while searching for user")
+		}
+	} else {
+		// Active user exists, update name and last name if provided and different
+		updated := false
+		if user.Name != req.Name {
+			user.Name = req.Name
+			updated = true
+		}
+		if user.LastName != req.LastName {
+			user.LastName = req.LastName
+			updated = true
+		}
+		if updated {
+			if err := config.DB.Save(&user).Error; err != nil {
+				return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update user information")
+			}
+		}
+	}
+
+	// Get table-specific lock to prevent concurrent reservations for the same table
+	tableLock := rc.getTableLock(req.TableID)
+	tableLock.Lock()
+	defer tableLock.Unlock()
+
+	// Use database transaction to ensure atomicity
+	tx := config.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Check if table exists and lock the row (SELECT FOR UPDATE)
+	var table models.Table
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&table, req.TableID).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			return rc.ErrorResponse(c, fiber.StatusNotFound, "Table not found")
+		}
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch table")
+	}
+
+	// Check if table is available
+	if table.Status != models.TableStatusAvailable {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Table is not available")
+	}
+
+	// Check if table is already reserved at this date and time
+	var existingReservation models.Reservation
+	if err := tx.Where("table_id = ? AND date = ? AND time = ? AND status IN ?",
+		req.TableID,
+		reservationDate,
+		reservationTime,
+		[]models.ReservationStatus{
+			models.ReservationStatusPending,
+			models.ReservationStatusConfirmed,
+		}).First(&existingReservation).Error; err == nil {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusConflict, "Table is already reserved at this date and time")
+	} else if err != gorm.ErrRecordNotFound {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
+	}
+
+	// Create reservation
+	reservation := models.Reservation{
+		UserID:  user.ID,
+		TableID: req.TableID,
+		Date:    reservationDate,
+		Time:    reservationTime,
+		Status:  models.ReservationStatusPending,
+	}
+
+	if err := tx.Create(&reservation).Error; err != nil {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create reservation")
+	}
+
+	// Update table status to reserved
+	table.Status = models.TableStatusReserved
+	if err := tx.Save(&table).Error; err != nil {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update table status")
+	}
+
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to commit reservation")
+	}
+
+	// Load relationships for response (outside transaction)
+	config.DB.Preload("User").Preload("Table").First(&reservation, reservation.ID)
+
+	// Send notification asynchronously
+	if rc.notificationService != nil {
+		go rc.notificationService.SendReservationCreatedNotification(&reservation)
+	}
+
+	return rc.SuccessResponse(c, reservation, "Reservation created successfully by admin")
 }
