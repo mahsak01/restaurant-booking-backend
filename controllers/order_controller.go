@@ -163,29 +163,12 @@ func (oc *OrderController) GetUserOrders(c *fiber.Ctx) error {
 	return oc.SuccessResponse(c, orders, "Orders retrieved successfully")
 }
 
-// GetAllOrders gets all orders (admin only)
+// GetAllOrders gets all orders (admin only) - no filters, returns all orders
 func (oc *OrderController) GetAllOrders(c *fiber.Ctx) error {
 	var orders []models.Order
-	query := config.DB
 
-	// Filter by user_id if provided
-	userIDStr := c.Query("user_id")
-	if userIDStr != "" {
-		userID, err := strconv.ParseUint(userIDStr, 10, 32)
-		if err != nil {
-			return oc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid user_id")
-		}
-		query = query.Where("user_id = ?", userID)
-	}
-
-	// Filter by status if provided
-	status := c.Query("status")
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-
-	// Order by created_at descending (newest first)
-	if err := query.Preload("User").Preload("OrderItems.MenuItem").Order("created_at DESC").Find(&orders).Error; err != nil {
+	// Get all orders ordered by created_at descending (newest first)
+	if err := config.DB.Preload("User").Preload("OrderItems.MenuItem").Order("created_at DESC").Find(&orders).Error; err != nil {
 		return oc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch orders")
 	}
 
