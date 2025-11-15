@@ -22,6 +22,7 @@ type CreateMenuItemRequest struct {
 	Price       float64             `json:"price" binding:"required,gt=0"`
 	ImageURL    string              `json:"image_url"`
 	Category    models.MenuCategory `json:"category" binding:"required"`
+	IsAvailable *bool               `json:"is_available"` // Optional, defaults to true
 }
 
 // UpdateMenuItemRequest update menu item request structure
@@ -31,6 +32,7 @@ type UpdateMenuItemRequest struct {
 	Price       float64             `json:"price" binding:"omitempty,gt=0"`
 	ImageURL    string              `json:"image_url"`
 	Category    models.MenuCategory `json:"category"`
+	IsAvailable *bool               `json:"is_available"` // Optional boolean pointer
 }
 
 // GetAllMenuItems gets all menu items (public)
@@ -49,6 +51,18 @@ func (mc *MenuController) GetAllMenuItems(c *fiber.Ctx) error {
 	if search != "" {
 		query = query.Where("name ILIKE ?", "%"+search+"%")
 	}
+
+	// Filter by availability if provided (default: only available items for customers)
+	available := c.Query("available")
+	if available == "" {
+		// Default: show only available items for public access
+		query = query.Where("is_available = ?", true)
+	} else if available == "true" {
+		query = query.Where("is_available = ?", true)
+	} else if available == "false" {
+		query = query.Where("is_available = ?", false)
+	}
+	// If available is "all", show all items (for admin)
 
 	if err := query.Order("created_at DESC").Find(&menuItems).Error; err != nil {
 		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch menu items")
@@ -97,8 +111,20 @@ func (mc *MenuController) GetMenuItemsByCategory(c *fiber.Ctx) error {
 		return mc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid category")
 	}
 
+	query := config.DB.Where("category = ?", category)
+
+	// Filter by availability (default: only available items)
+	available := c.Query("available")
+	if available == "" {
+		query = query.Where("is_available = ?", true)
+	} else if available == "true" {
+		query = query.Where("is_available = ?", true)
+	} else if available == "false" {
+		query = query.Where("is_available = ?", false)
+	}
+
 	var menuItems []models.MenuItem
-	if err := config.DB.Where("category = ?", category).Order("created_at DESC").Find(&menuItems).Error; err != nil {
+	if err := query.Order("created_at DESC").Find(&menuItems).Error; err != nil {
 		return mc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch menu items")
 	}
 
@@ -116,12 +142,19 @@ func (mc *MenuController) CreateMenuItem(c *fiber.Ctx) error {
 		return mc.ValidationErrorResponse(c, "Name, price, and category are required")
 	}
 
+	// Set default availability to true if not provided
+	isAvailable := true
+	if req.IsAvailable != nil {
+		isAvailable = *req.IsAvailable
+	}
+
 	menuItem := models.MenuItem{
 		Name:        req.Name,
 		Description: req.Description,
 		Price:       req.Price,
 		ImageURL:    req.ImageURL,
 		Category:    req.Category,
+		IsAvailable: isAvailable,
 	}
 
 	if err := config.DB.Create(&menuItem).Error; err != nil {
@@ -166,6 +199,9 @@ func (mc *MenuController) UpdateMenuItem(c *fiber.Ctx) error {
 	}
 	if req.Category != "" {
 		menuItem.Category = req.Category
+	}
+	if req.IsAvailable != nil {
+		menuItem.IsAvailable = *req.IsAvailable
 	}
 
 	if err := config.DB.Save(&menuItem).Error; err != nil {
