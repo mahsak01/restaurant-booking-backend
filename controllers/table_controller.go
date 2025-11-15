@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"strconv"
 
 	"restaurant-booking-backend/config"
@@ -32,7 +33,7 @@ type UpdateTableRequest struct {
 }
 
 // GetAllTables gets all tables with filtering (admin only)
-func (tc *TableController) GetAllTables(c *fiber.Ctx) error) {
+func (tc *TableController) GetAllTables(c *fiber.Ctx) error {
 	var tables []models.Table
 	query := config.DB
 
@@ -59,14 +60,13 @@ func (tc *TableController) GetAllTables(c *fiber.Ctx) error) {
 
 	if err := query.Order("number ASC").Find(&tables).Error; err != nil {
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch tables")
-		return
 	}
 
 	return tc.SuccessResponse(c, tables, "Tables retrieved successfully")
 }
 
 // GetAvailableTables gets available tables (public - for customers)
-func (tc *TableController) GetAvailableTables(c *fiber.Ctx) error) {
+func (tc *TableController) GetAvailableTables(c *fiber.Ctx) error {
 	var tables []models.Table
 	query := config.DB.Where("status = ?", models.TableStatusAvailable)
 
@@ -87,49 +87,42 @@ func (tc *TableController) GetAvailableTables(c *fiber.Ctx) error) {
 
 	if err := query.Order("number ASC").Find(&tables).Error; err != nil {
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch available tables")
-		return
 	}
 
 	return tc.SuccessResponse(c, tables, "Available tables retrieved successfully")
 }
 
 // GetTableByID gets a single table by ID
-func (tc *TableController) GetTableByID(c *fiber.Ctx) error) {
+func (tc *TableController) GetTableByID(c *fiber.Ctx) error {
 	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
 		return tc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid table ID")
-		return
 	}
 
 	var table models.Table
 	if err := config.DB.First(&table, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return tc.ErrorResponse(c, fiber.StatusNotFound, "Table not found")
-			return
 		}
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch table")
-		return
 	}
 
 	return tc.SuccessResponse(c, table, "Table retrieved successfully")
 }
 
 // CreateTable creates a new table (admin only)
-func (tc *TableController) CreateTable(c *fiber.Ctx) error) {
+func (tc *TableController) CreateTable(c *fiber.Ctx) error {
 	var req CreateTableRequest
 	if err := c.BodyParser(&req); err != nil {
 		tc.ValidationErrorResponse(c, err.Error())
-		return
 	}
 
 	// Check if table number already exists
 	var existingTable models.Table
 	if err := config.DB.Where("number = ?", req.Number).First(&existingTable).Error; err == nil {
 		return tc.ErrorResponse(c, fiber.StatusConflict, "Table with this number already exists")
-		return
-	} else if err != gorm.ErrRecordNotFound {
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
-		return
 	}
 
 	// Set default status if not provided
@@ -146,34 +139,29 @@ func (tc *TableController) CreateTable(c *fiber.Ctx) error) {
 
 	if err := config.DB.Create(&table).Error; err != nil {
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create table")
-		return
 	}
 
 	return tc.SuccessResponse(c, table, "Table created successfully")
 }
 
 // UpdateTable updates an existing table (admin only)
-func (tc *TableController) UpdateTable(c *fiber.Ctx) error) {
+func (tc *TableController) UpdateTable(c *fiber.Ctx) error {
 	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
 		return tc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid table ID")
-		return
 	}
 
 	var table models.Table
 	if err := config.DB.First(&table, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return tc.ErrorResponse(c, fiber.StatusNotFound, "Table not found")
-			return
 		}
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch table")
-		return
 	}
 
 	var req UpdateTableRequest
 	if err := c.BodyParser(&req); err != nil {
 		tc.ValidationErrorResponse(c, err.Error())
-		return
 	}
 
 	// Check if new number conflicts with existing table
@@ -181,10 +169,8 @@ func (tc *TableController) UpdateTable(c *fiber.Ctx) error) {
 		var existingTable models.Table
 		if err := config.DB.Where("number = ? AND id != ?", req.Number, id).First(&existingTable).Error; err == nil {
 			return tc.ErrorResponse(c, fiber.StatusConflict, "Table with this number already exists")
-			return
 		} else if err != gorm.ErrRecordNotFound {
 			return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
-			return
 		}
 		table.Number = req.Number
 	}
@@ -202,28 +188,24 @@ func (tc *TableController) UpdateTable(c *fiber.Ctx) error) {
 
 	if err := config.DB.Save(&table).Error; err != nil {
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update table")
-		return
 	}
 
 	return tc.SuccessResponse(c, table, "Table updated successfully")
 }
 
 // DeleteTable deletes a table (admin only)
-func (tc *TableController) DeleteTable(c *fiber.Ctx) error) {
+func (tc *TableController) DeleteTable(c *fiber.Ctx) error {
 	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
 		return tc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid table ID")
-		return
 	}
 
 	var table models.Table
 	if err := config.DB.First(&table, id).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return tc.ErrorResponse(c, fiber.StatusNotFound, "Table not found")
-			return
 		}
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch table")
-		return
 	}
 
 	// Check if table has active reservations
@@ -236,19 +218,17 @@ func (tc *TableController) DeleteTable(c *fiber.Ctx) error) {
 
 	if activeReservations > 0 {
 		return tc.ErrorResponse(c, fiber.StatusBadRequest, "Cannot delete table with active reservations")
-		return
 	}
 
 	if err := config.DB.Delete(&table).Error; err != nil {
 		return tc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to delete table")
-		return
 	}
 
 	return tc.SuccessResponse(c, nil, "Table deleted successfully")
 }
 
 // GetTableStatuses gets all available table statuses
-func (tc *TableController) GetTableStatuses(c *fiber.Ctx) error) {
+func (tc *TableController) GetTableStatuses(c *fiber.Ctx) error {
 	statuses := []map[string]string{
 		{"value": string(models.TableStatusAvailable), "label": "Available"},
 		{"value": string(models.TableStatusReserved), "label": "Reserved"},
@@ -256,6 +236,5 @@ func (tc *TableController) GetTableStatuses(c *fiber.Ctx) error) {
 		{"value": string(models.TableStatusMaintenance), "label": "Maintenance"},
 	}
 
-	tc.SuccessResponse(c, statuses, "Table statuses retrieved successfully")
+	return tc.SuccessResponse(c, statuses, "Table statuses retrieved successfully")
 }
-
