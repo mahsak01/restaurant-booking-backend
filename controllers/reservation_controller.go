@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"strconv"
+	"sync"
 	"time"
 
 	"restaurant-booking-backend/config"
@@ -16,6 +17,10 @@ import (
 type ReservationController struct {
 	BaseController
 	notificationService *services.NotificationService
+	// tableLocks stores mutexes for each table to prevent concurrent reservations
+	tableLocks sync.Map // map[uint]*sync.Mutex
+	// globalLock for operations that need global synchronization
+	globalLock sync.RWMutex
 }
 
 // NewReservationController creates a new reservation controller
@@ -37,7 +42,21 @@ type UpdateReservationStatusRequest struct {
 	Status models.ReservationStatus `json:"status" binding:"required"`
 }
 
+// getTableLock gets or creates a mutex for a specific table
+func (rc *ReservationController) getTableLock(tableID uint) *sync.Mutex {
+	// Try to get existing mutex
+	if lock, ok := rc.tableLocks.Load(tableID); ok {
+		return lock.(*sync.Mutex)
+	}
+
+	// Create new mutex if it doesn't exist
+	newLock := &sync.Mutex{}
+	lock, _ := rc.tableLocks.LoadOrStore(tableID, newLock)
+	return lock.(*sync.Mutex)
+}
+
 // CreateReservation creates a new reservation (customer only)
+// Uses mutex and database transaction to prevent concurrent reservation conflicts
 func (rc *ReservationController) CreateReservation(c *fiber.Ctx) error {
 	// Get user ID from context (set by auth middleware)
 	userID := c.Locals("user_id")
@@ -76,9 +95,23 @@ func (rc *ReservationController) CreateReservation(c *fiber.Ctx) error {
 		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Cannot make reservation in the past")
 	}
 
-	// Check if table exists
+	// Get table-specific lock to prevent concurrent reservations for the same table
+	tableLock := rc.getTableLock(req.TableID)
+	tableLock.Lock()
+	defer tableLock.Unlock()
+
+	// Use database transaction to ensure atomicity
+	tx := config.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Check if table exists and lock the row (SELECT FOR UPDATE)
 	var table models.Table
-	if err := config.DB.First(&table, req.TableID).Error; err != nil {
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&table, req.TableID).Error; err != nil {
+		tx.Rollback()
 		if err == gorm.ErrRecordNotFound {
 			return rc.ErrorResponse(c, fiber.StatusNotFound, "Table not found")
 		}
@@ -87,12 +120,13 @@ func (rc *ReservationController) CreateReservation(c *fiber.Ctx) error {
 
 	// Check if table is available
 	if table.Status != models.TableStatusAvailable {
+		tx.Rollback()
 		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Table is not available")
 	}
 
 	// Check if table is already reserved at this date and time
 	var existingReservation models.Reservation
-	if err := config.DB.Where("table_id = ? AND date = ? AND time = ? AND status IN ?",
+	if err := tx.Where("table_id = ? AND date = ? AND time = ? AND status IN ?",
 		req.TableID,
 		reservationDate,
 		reservationTime,
@@ -100,8 +134,10 @@ func (rc *ReservationController) CreateReservation(c *fiber.Ctx) error {
 			models.ReservationStatusPending,
 			models.ReservationStatusConfirmed,
 		}).First(&existingReservation).Error; err == nil {
+		tx.Rollback()
 		return rc.ErrorResponse(c, fiber.StatusConflict, "Table is already reserved at this date and time")
 	} else if err != gorm.ErrRecordNotFound {
+		tx.Rollback()
 		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
 	}
 
@@ -114,18 +150,27 @@ func (rc *ReservationController) CreateReservation(c *fiber.Ctx) error {
 		Status:  models.ReservationStatusPending,
 	}
 
-	if err := config.DB.Create(&reservation).Error; err != nil {
+	if err := tx.Create(&reservation).Error; err != nil {
+		tx.Rollback()
 		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to create reservation")
 	}
 
 	// Update table status to reserved
 	table.Status = models.TableStatusReserved
-	config.DB.Save(&table)
+	if err := tx.Save(&table).Error; err != nil {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update table status")
+	}
 
-	// Load relationships for response
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to commit reservation")
+	}
+
+	// Load relationships for response (outside transaction)
 	config.DB.Preload("User").Preload("Table").First(&reservation, reservation.ID)
 
-	// Send notification
+	// Send notification asynchronously
 	if rc.notificationService != nil {
 		go rc.notificationService.SendReservationCreatedNotification(&reservation)
 	}
@@ -193,6 +238,7 @@ func (rc *ReservationController) GetReservationByID(c *fiber.Ctx) error {
 }
 
 // CancelReservation cancels a reservation (customer can cancel their own, admin can cancel any)
+// Uses mutex and database transaction to prevent concurrent conflicts
 func (rc *ReservationController) CancelReservation(c *fiber.Ctx) error {
 	id, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
@@ -228,15 +274,44 @@ func (rc *ReservationController) CancelReservation(c *fiber.Ctx) error {
 		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Cannot cancel completed reservation")
 	}
 
+	// Get table-specific lock to prevent concurrent modifications
+	tableLock := rc.getTableLock(reservation.TableID)
+	tableLock.Lock()
+	defer tableLock.Unlock()
+
+	// Use database transaction to ensure atomicity
+	tx := config.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Reload reservation within transaction with lock
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&reservation, id).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			return rc.ErrorResponse(c, fiber.StatusNotFound, "Reservation not found")
+		}
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservation")
+	}
+
+	// Double-check status within transaction
+	if reservation.Status == models.ReservationStatusCancelled {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Reservation is already cancelled")
+	}
+
 	// Update reservation status
 	reservation.Status = models.ReservationStatusCancelled
-	if err := config.DB.Save(&reservation).Error; err != nil {
+	if err := tx.Save(&reservation).Error; err != nil {
+		tx.Rollback()
 		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to cancel reservation")
 	}
 
 	// Update table status if no other active reservations
 	var activeReservations int64
-	config.DB.Model(&models.Reservation{}).
+	tx.Model(&models.Reservation{}).
 		Where("table_id = ? AND status IN ?", reservation.TableID, []models.ReservationStatus{
 			models.ReservationStatusPending,
 			models.ReservationStatusConfirmed,
@@ -244,14 +319,24 @@ func (rc *ReservationController) CancelReservation(c *fiber.Ctx) error {
 
 	if activeReservations == 0 {
 		var table models.Table
-		config.DB.First(&table, reservation.TableID)
-		table.Status = models.TableStatusAvailable
-		config.DB.Save(&table)
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&table, reservation.TableID).Error; err == nil {
+			table.Status = models.TableStatusAvailable
+			if err := tx.Save(&table).Error; err != nil {
+				tx.Rollback()
+				return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update table status")
+			}
+		}
 	}
 
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to commit cancellation")
+	}
+
+	// Load relationships for response (outside transaction)
 	config.DB.Preload("User").Preload("Table").First(&reservation, reservation.ID)
 
-	// Send notification
+	// Send notification asynchronously
 	if rc.notificationService != nil {
 		go rc.notificationService.SendReservationCancelledNotification(&reservation)
 	}
@@ -302,14 +387,6 @@ func (rc *ReservationController) UpdateReservationStatus(c *fiber.Ctx) error {
 		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid reservation ID")
 	}
 
-	var reservation models.Reservation
-	if err := config.DB.Preload("Table").First(&reservation, id).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return rc.ErrorResponse(c, fiber.StatusNotFound, "Reservation not found")
-		}
-		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservation")
-	}
-
 	var req UpdateReservationStatusRequest
 	if err := c.BodyParser(&req); err != nil {
 		return rc.ValidationErrorResponse(c, err.Error())
@@ -333,22 +410,57 @@ func (rc *ReservationController) UpdateReservationStatus(c *fiber.Ctx) error {
 		return rc.ErrorResponse(c, fiber.StatusBadRequest, "Invalid reservation status")
 	}
 
-	reservation.Status = req.Status
+	// First, get reservation to know which table to lock
+	var reservation models.Reservation
+	if err := config.DB.Preload("Table").First(&reservation, id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return rc.ErrorResponse(c, fiber.StatusNotFound, "Reservation not found")
+		}
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservation")
+	}
 
-	if err := config.DB.Save(&reservation).Error; err != nil {
+	// Get table-specific lock to prevent concurrent modifications
+	tableLock := rc.getTableLock(reservation.TableID)
+	tableLock.Lock()
+	defer tableLock.Unlock()
+
+	// Use database transaction to ensure atomicity
+	tx := config.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Reload reservation within transaction with lock
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").Preload("Table").First(&reservation, id).Error; err != nil {
+		tx.Rollback()
+		if err == gorm.ErrRecordNotFound {
+			return rc.ErrorResponse(c, fiber.StatusNotFound, "Reservation not found")
+		}
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch reservation")
+	}
+
+	// Update reservation status
+	reservation.Status = req.Status
+	if err := tx.Save(&reservation).Error; err != nil {
+		tx.Rollback()
 		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update reservation status")
 	}
 
 	// Update table status based on reservation status
 	var table models.Table
-	config.DB.First(&table, reservation.TableID)
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&table, reservation.TableID).Error; err != nil {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch table")
+	}
 
 	if req.Status == models.ReservationStatusConfirmed {
 		table.Status = models.TableStatusReserved
 	} else if req.Status == models.ReservationStatusCancelled || req.Status == models.ReservationStatusCompleted {
 		// Check if there are other active reservations for this table
 		var activeReservations int64
-		config.DB.Model(&models.Reservation{}).
+		tx.Model(&models.Reservation{}).
 			Where("table_id = ? AND id != ? AND status IN ?", reservation.TableID, id, []models.ReservationStatus{
 				models.ReservationStatusPending,
 				models.ReservationStatusConfirmed,
@@ -359,11 +471,20 @@ func (rc *ReservationController) UpdateReservationStatus(c *fiber.Ctx) error {
 		}
 	}
 
-	config.DB.Save(&table)
+	if err := tx.Save(&table).Error; err != nil {
+		tx.Rollback()
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to update table status")
+	}
 
+	// Commit transaction
+	if err := tx.Commit().Error; err != nil {
+		return rc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to commit status update")
+	}
+
+	// Load relationships for response (outside transaction)
 	config.DB.Preload("User").Preload("Table").First(&reservation, reservation.ID)
 
-	// Send notification
+	// Send notification asynchronously
 	if rc.notificationService != nil {
 		go rc.notificationService.SendReservationStatusUpdatedNotification(&reservation)
 	}
