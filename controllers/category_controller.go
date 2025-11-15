@@ -18,19 +18,20 @@ type CategoryController struct {
 
 // CreateCategoryRequest create category request structure
 type CreateCategoryRequest struct {
-	Name        string `json:"name" binding:"required"`         // Category name (e.g., "appetizer")
-	DisplayName string `json:"display_name" binding:"required"` // Display name (e.g., "Appetizer")
-	Description string `json:"description"`                     // Optional description
-	SortOrder   int    `json:"sort_order"`                      // Sort order (optional)
+	Name        string `json:"name"`         // Category name (e.g., "appetizer") - required
+	DisplayName string `json:"display_name"` // Display name (e.g., "Appetizer") - required
+	Description string `json:"description"`  // Optional description
+	IsActive    *bool  `json:"is_active"`    // Optional, defaults to true
+	SortOrder   int    `json:"sort_order"`   // Sort order (optional)
 }
 
 // UpdateCategoryRequest update category request structure
 type UpdateCategoryRequest struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	Description string `json:"description"`
-	IsActive    *bool  `json:"is_active"`
-	SortOrder   *int   `json:"sort_order"`
+	Name        string  `json:"name"`
+	DisplayName string  `json:"display_name"`
+	Description *string `json:"description"` // Pointer to allow clearing description
+	IsActive    *bool   `json:"is_active"`
+	SortOrder   *int    `json:"sort_order"`
 }
 
 // GetAllCategories gets all categories (public)
@@ -40,17 +41,15 @@ func (cc *CategoryController) GetAllCategories(c *fiber.Ctx) error {
 
 	// Filter by active status if provided
 	active := c.Query("active")
-	if active == "" {
+	if active == "" || active == "true" {
 		// Default: show only active categories for public access
-		query = query.Where("is_active = ?", true)
-	} else if active == "true" {
 		query = query.Where("is_active = ?", true)
 	} else if active == "false" {
 		query = query.Where("is_active = ?", false)
 	}
-	// If active is "all", show all categories (for admin)
+	// If active is "all", show all categories (no filter applied)
 
-	if err := query.Order("sort_order ASC, name ASC").Find(&categories).Error; err != nil {
+	if err := query.Order("sort_order ASC, display_name ASC").Find(&categories).Error; err != nil {
 		return cc.ErrorResponse(c, fiber.StatusInternalServerError, "Failed to fetch categories")
 	}
 
@@ -98,12 +97,18 @@ func (cc *CategoryController) CreateCategory(c *fiber.Ctx) error {
 		return cc.ErrorResponse(c, fiber.StatusInternalServerError, "Database error")
 	}
 
+	// Set default active status to true if not provided
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+
 	// Create category
 	category := models.Category{
 		Name:        req.Name,
 		DisplayName: req.DisplayName,
 		Description: strings.TrimSpace(req.Description),
-		IsActive:    true,
+		IsActive:    isActive,
 		SortOrder:   req.SortOrder,
 	}
 
@@ -151,8 +156,9 @@ func (cc *CategoryController) UpdateCategory(c *fiber.Ctx) error {
 		category.DisplayName = strings.TrimSpace(req.DisplayName)
 	}
 
-	if req.Description != "" {
-		category.Description = strings.TrimSpace(req.Description)
+	// Update description if provided (pointer allows us to distinguish between not provided and empty)
+	if req.Description != nil {
+		category.Description = strings.TrimSpace(*req.Description)
 	}
 
 	if req.IsActive != nil {
